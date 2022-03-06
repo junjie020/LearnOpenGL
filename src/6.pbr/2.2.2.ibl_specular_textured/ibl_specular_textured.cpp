@@ -176,7 +176,7 @@ int main()
     // ---------------------------------
     stbi_set_flip_vertically_on_load(true);
     int width, height, nrComponents;
-    float *data = stbi_loadf(FileSystem::getPath("resources/textures/hdr/newport_loft.hdr").c_str(), &width, &height, &nrComponents, 0);
+    float *data = stbi_loadf(FileSystem::getPath("resources/textures/hdr/kiara_4_mid-morning_4k.hdr").c_str(), &width, &height, &nrComponents, 0);
     unsigned int hdrTexture;
     if (data)
     {
@@ -184,8 +184,8 @@ int main()
         glBindTexture(GL_TEXTURE_2D, hdrTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, data); // note how we specify the texture's data value to be float
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
@@ -199,24 +199,31 @@ int main()
     // pbr: setup cubemap to render to and attach to framebuffer
     // ---------------------------------------------------------
 
-    auto create_cubemap = [](auto facesize){
+    auto create_cubemap = [](auto facesize, bool mipmap){
         uint32_t texid;
         glGenTextures(1, &texid);
+        assert(glGetError() == 0);
         glBindTexture(GL_TEXTURE_CUBE_MAP, texid);
+        assert(glGetError() == 0);
         for (unsigned int i = 0; i < 6; ++i)
         {
             glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, facesize, facesize, 0, GL_RGB, GL_FLOAT, nullptr);
+            assert(glGetError() == 0);
         }
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        assert(glGetError() == 0);
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        assert(glGetError() == 0);
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); // enable pre-filter mipmap sampling (combatting visible dots artifact)
+        assert(glGetError() == 0);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR); // enable pre-filter mipmap sampling (combatting visible dots artifact)
+        assert(glGetError() == 0);
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        assert(glGetError() == 0);
         return texid;
     };
 
-
-    auto envCubemap = create_cubemap(512);
+    auto envCubemap = create_cubemap(512, true);
     // pbr: set up projection and view matrices for capturing data onto the 6 cubemap face directions
     // ----------------------------------------------------------------------------------------------
     glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
@@ -233,33 +240,46 @@ int main()
     // pbr: convert HDR equirectangular environment map to cubemap equivalent
     // ----------------------------------------------------------------------
     equirectangularToCubemapShader.use();
+    assert(glGetError() == 0);
     equirectangularToCubemapShader.setInt("u_panorama", 0);
+    assert(glGetError() == 0);
     //equirectangularToCubemapShader.setMat4("projection", captureProjection);
     glActiveTexture(GL_TEXTURE0);
+    assert(glGetError() == 0);
     glBindTexture(GL_TEXTURE_2D, hdrTexture);
-
+    assert(glGetError() == 0);
 
     glViewport(0, 0, 512, 512); // don't forget to configure the viewport to the capture dimensions.
+    assert(glGetError() == 0);
     glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+    assert(glGetError() == 0);
     for (unsigned int i = 0; i < 6; ++i)
     {
         //equirectangularToCubemapShader.setMat4("view", captureViews[i]);
         equirectangularToCubemapShader.setInt("u_currentFace", i);
+        assert(glGetError() == 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, envCubemap, 0);
+        assert(glGetError() == 0);
         glClear(GL_COLOR_BUFFER_BIT);
+        assert(glGetError() == 0);
 
         renderTri();
+        assert(glGetError() == 0);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    assert(glGetError() == 0);
+
     // then let OpenGL generate mipmaps from first mip face (combatting visible dots artifact)
     glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+    assert(glGetError() == 0);
     glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    assert(glGetError() == 0);
 
     // pbr: create an irradiance cubemap, and re-scale capture FBO to irradiance scale.
     // --------------------------------------------------------------------------------
 
-    unsigned int irradianceMap = create_cubemap(32);
+    unsigned int irradianceMap = create_cubemap(32, false);
     // glGenTextures(1, &irradianceMap);
     // glBindTexture(GL_TEXTURE_CUBE_MAP, irradianceMap);
     // for (unsigned int i = 0; i < 6; ++i)
@@ -273,6 +293,7 @@ int main()
     // glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+    assert(glGetError() == 0);
     // glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
     // glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 32, 32);
 
@@ -541,13 +562,17 @@ int main()
 
         // render skybox (render as last to prevent overdraw)
         backgroundShader.use();
-
+        assert(glGetError() == 0);
         backgroundShader.setMat4("view", view);
+        assert(glGetError() == 0);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+        assert(glGetError() == 0);
+        //glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+        assert(glGetError() == 0);
         //glBindTexture(GL_TEXTURE_CUBE_MAP, irradianceMap); // display irradiance map
-        //glBindTexture(GL_TEXTURE_CUBE_MAP, prefilterMap); // display prefilter map
+        glBindTexture(GL_TEXTURE_CUBE_MAP, prefilterMap); // display prefilter map
         renderCube();
+        assert(glGetError() == 0);
 
         // render BRDF map to screen
         //brdfShader.Use();
@@ -790,7 +815,8 @@ void renderCube()
         glBindVertexArray(0);
     }
     // render Cube
-    glBindVertexArray(cubeVAO);
+    
+    glBindVertexArray(cubeVAO);   
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glBindVertexArray(0);
 }
