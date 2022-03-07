@@ -90,8 +90,9 @@ int main()
     //Shader equirectangularToCubemapShader("2.2.2.cubemap.vs", "2.2.2.equirectangular_to_cubemap.fs");
     Shader equirectangularToCubemapShader("2.2.2.fullscreen.vs", "2.2.2.p2cm.fs");
     //Shader irradianceShader("2.2.2.cubemap.vs", "2.2.2.irradiance_convolution.fs");
-    Shader irradianceShader("2.2.2.fullscreen.vs", "2.2.2.irradiance_new.fs");
-    Shader prefilterShader("2.2.2.cubemap.vs", "2.2.2.prefilter.fs");
+    Shader irradianceShader("2.2.2.fullscreen.vs", "2.2.2.ibl_sampler.fs");
+    //Shader prefilterShader("2.2.2.cubemap.vs", "2.2.2.prefilter.fs");
+    Shader prefilterShader("2.2.2.fullscreen.vs", "2.2.2.ibl_sampler.fs");
     Shader brdfShader("2.2.2.brdf.vs", "2.2.2.brdf.fs");
     Shader backgroundShader("2.2.2.background.vs", "2.2.2.background.fs");
 
@@ -298,25 +299,17 @@ int main()
 
     glViewport(0, 0, 32, 32); // don't forget to configure the viewport to the capture dimensions.
     glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+    irradianceShader.setFloat("u_roughness", 0.0f);
+    irradianceShader.setInt("u_sampleCount", 512);
+    irradianceShader.setInt("u_width", 32);
+    irradianceShader.setFloat("u_lodBias", 0.0f);
+    const int Lam_distribution = 0;
+    irradianceShader.setInt("u_distribution", Lam_distribution);
+    irradianceShader.setInt("u_isGeneratingLUT", 0);
+
     for (unsigned int i = 0; i < 6; ++i)
     {
-        //irradianceShader.setMat4("view", captureViews[i]);
-
-        // uniform  float u_roughness;
-        // uniform  int u_sampleCount;
-        // uniform  int u_width;
-        // uniform  float u_lodBias;
-        // uniform  int u_distribution; // enum
-        // uniform int u_currentFace;
-        // uniform int u_isGeneratingLUT;
-        irradianceShader.setFloat("u_roughness", 0.0f);
-        irradianceShader.setInt("u_sampleCount", 512);
-        irradianceShader.setInt("u_width", 32);
-        irradianceShader.setFloat("u_lodBias", 0.0f);
-        const int Lam_distribution = 0;
-        irradianceShader.setInt("u_distribution", Lam_distribution);
         irradianceShader.setInt("u_currentFace", i);
-        irradianceShader.setInt("u_isGeneratingLUT", 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, irradianceMap, 0);
         renderTri();
     }
@@ -324,26 +317,22 @@ int main()
 
     // pbr: create a pre-filter cubemap, and re-scale capture FBO to pre-filter scale.
     // --------------------------------------------------------------------------------
-    unsigned int prefilterMap;
-    glGenTextures(1, &prefilterMap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, prefilterMap);
-    for (unsigned int i = 0; i < 6; ++i)
-    {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, 128, 128, 0, GL_RGB, GL_FLOAT, nullptr);
-    }
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); // be sure to set minification filter to mip_linear 
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    uint32_t prefilterMap = create_cubemap(128, true);
     // generate mipmaps for the cubemap so OpenGL automatically allocates the required memory.
     glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
 
     // pbr: run a quasi monte-carlo simulation on the environment lighting to create a prefilter (cube)map.
     // ----------------------------------------------------------------------------------------------------
     prefilterShader.use();
-    prefilterShader.setInt("environmentMap", 0);
-    prefilterShader.setMat4("projection", captureProjection);
+    prefilterShader.setInt("uCubemap", 0);
+    prefilterShader.setInt("u_sampleCount", 512);
+    prefilterShader.setInt("u_width", 128);
+    prefilterShader.setFloat("u_lodBias", 0.0f);
+    const int GGX_distribution = 1;
+    prefilterShader.setInt("u_distribution", GGX_distribution);
+    
+    prefilterShader.setInt("u_isGeneratingLUT", 0);
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 
@@ -357,12 +346,14 @@ int main()
         glViewport(0, 0, mipWidth, mipHeight);
 
         float roughness = (float)mip / (float)(maxMipLevels - 1);
-        prefilterShader.setFloat("roughness", roughness);
+        prefilterShader.setFloat("u_roughness", roughness);
         for (unsigned int i = 0; i < 6; ++i)
         {
-            prefilterShader.setMat4("view", captureViews[i]);
+            //prefilterShader.setMat4("view", captureViews[i]);
+            prefilterShader.setInt("u_currentFace", i);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, prefilterMap, mip);
-            renderCube();
+            //renderCube();
+            renderTri();
         }
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -543,17 +534,12 @@ int main()
 
         // render skybox (render as last to prevent overdraw)
         backgroundShader.use();
-        assert(glGetError() == 0);
         backgroundShader.setMat4("view", view);
-        assert(glGetError() == 0);
         glActiveTexture(GL_TEXTURE0);
-        assert(glGetError() == 0);
         //glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
-        assert(glGetError() == 0);
         //glBindTexture(GL_TEXTURE_CUBE_MAP, irradianceMap); // display irradiance map
         glBindTexture(GL_TEXTURE_CUBE_MAP, prefilterMap); // display prefilter map
         renderCube();
-        assert(glGetError() == 0);
 
         // render BRDF map to screen
         //brdfShader.Use();
