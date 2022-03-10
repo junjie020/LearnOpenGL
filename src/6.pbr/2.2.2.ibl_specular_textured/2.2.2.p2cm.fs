@@ -39,7 +39,7 @@ vec2 dirToUV(vec3 dir)
 {
 	return vec2(
 		0.5f + 0.5f * atan(dir.z, dir.x) / MATH_PI,
-		1.f - acos(dir.y) / MATH_PI);
+		acos(dir.y) / MATH_PI);
 }
 
 vec3 panoramaToCubeMap(int face, vec2 texCoord)
